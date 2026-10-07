@@ -1,0 +1,57 @@
+name: Bootstrap DAVIA ACCOUNT
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract DAVIA ACCOUNT ZIP
+        shell: bash
+        run: |
+          set -e
+          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found in repository root."
+            exit 1
+          fi
+          echo "Using ZIP: $ZIP_FILE"
+          rm -rf .bootstrap_extract
+          mkdir -p .bootstrap_extract
+          unzip -q "$ZIP_FILE" -d .bootstrap_extract
+          shopt -s dotglob nullglob
+          items=(.bootstrap_extract/*)
+          if [ "${#items[@]}" -eq 1 ] && [ -d "${items[0]}" ]; then
+            SOURCE_DIR="${items[0]}"
+          else
+            SOURCE_DIR=".bootstrap_extract"
+          fi
+          cp -a "$SOURCE_DIR"/. .
+          rm -rf .bootstrap_extract
+          rm -f "$ZIP_FILE"
+          test -d backend/DaviaAccount.Api
+          test -d frontend
+          test -d database
+          test -f docker-compose.yml
+          echo "DAVIA ACCOUNT structure is ready."
+
+      - name: Commit extracted project
+        shell: bash
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "Bootstrap DAVIA ACCOUNT V1.0.0"
+          git push
