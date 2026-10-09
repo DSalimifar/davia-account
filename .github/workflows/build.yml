@@ -16,7 +16,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -39,7 +38,6 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
-
       postgres:
         image: postgres:16
 
@@ -57,39 +55,31 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
-
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
 
-
       - name: Restore Backend
         working-directory: backend/DaviaAccount.Api
         run: dotnet restore
-
 
       - name: Build Backend
         working-directory: backend/DaviaAccount.Api
         run: dotnet build --configuration Release --no-restore
 
-
       - name: Start API
         working-directory: backend/DaviaAccount.Api
-
         env:
           ConnectionStrings__DefaultConnection: Host=localhost;Port=5432;Database=davia_test;Username=davia_test;Password=davia_test_password
           Jwt__Key: DAVIA_TEST_SECRET_KEY_2026_LONG_RANDOM_VALUE_CHANGE_LATER
           Jwt__Issuer: DaviaAccount
           Jwt__Audience: DaviaAccount
-          Jwt__ExpiresMinutes: 60
-
+          Jwt__Minutes: 60
         run: |
           nohup dotnet run \
             --configuration Release \
@@ -97,13 +87,10 @@ jobs:
             --urls http://localhost:5080 \
             > api.log 2>&1 &
 
-
       - name: Wait for API
         shell: bash
-
         run: |
           for i in {1..30}; do
-
             if curl --fail --silent http://localhost:5080/api/health; then
               echo
               echo "API is ready."
@@ -112,29 +99,24 @@ jobs:
 
             echo "Waiting for API..."
             sleep 2
-
           done
 
           echo "API did not become ready."
-
           cat backend/DaviaAccount.Api/api.log || true
-
           exit 1
-
 
       - name: Verify unauthenticated API
         run: |
-
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             http://localhost:5080/api/customers)
 
+          echo "Unauthenticated customers endpoint HTTP status: $STATUS"
           test "$STATUS" = "401"
-
 
       - name: Register Company A
         run: |
-
-          curl --fail --silent --show-error \
+          RESPONSE=$(curl --silent --show-error \
+            -w '\nHTTP_STATUS:%{http_code}' \
             -X POST \
             http://localhost:5080/api/auth/register \
             -H "Content-Type: application/json" \
@@ -143,13 +125,18 @@ jobs:
               "fullName": "Test User A",
               "username": "testa@davia.local",
               "password": "TestPassword123!"
-            }'
+            }')
 
+          echo "$RESPONSE"
+
+          STATUS=$(echo "$RESPONSE" | sed -n 's/^HTTP_STATUS://p')
+          test "$STATUS" -ge 200
+          test "$STATUS" -lt 300
 
       - name: Login Company A
         run: |
-
-          RESPONSE=$(curl --fail --silent --show-error \
+          RESPONSE=$(curl --silent --show-error \
+            -w '\nHTTP_STATUS:%{http_code}' \
             -X POST \
             http://localhost:5080/api/auth/login \
             -H "Content-Type: application/json" \
@@ -158,20 +145,24 @@ jobs:
               "password": "TestPassword123!"
             }')
 
-          echo "$RESPONSE" > /tmp/login-a.json
+          echo "$RESPONSE"
 
-          TOKEN=$(echo "$RESPONSE" | python -c "
+          STATUS=$(echo "$RESPONSE" | sed -n 's/^HTTP_STATUS://p')
+          BODY=$(echo "$RESPONSE" | sed '/^HTTP_STATUS:/d')
+
+          test "$STATUS" = "200"
+
+          TOKEN=$(echo "$BODY" | python -c "
           import sys,json
           print(json.load(sys.stdin)['token'])
           ")
 
           echo "API_TOKEN_A=$TOKEN" >> "$GITHUB_ENV"
 
-
       - name: Create Customer
         run: |
-
-          RESPONSE=$(curl --fail --silent --show-error \
+          RESPONSE=$(curl --silent --show-error \
+            -w '\nHTTP_STATUS:%{http_code}' \
             -X POST \
             http://localhost:5080/api/customers \
             -H "Authorization: Bearer $API_TOKEN_A" \
@@ -183,18 +174,22 @@ jobs:
 
           echo "$RESPONSE"
 
-          CUSTOMER_ID=$(echo "$RESPONSE" | python -c "
+          STATUS=$(echo "$RESPONSE" | sed -n 's/^HTTP_STATUS://p')
+          BODY=$(echo "$RESPONSE" | sed '/^HTTP_STATUS:/d')
+
+          test "$STATUS" = "201"
+
+          CUSTOMER_ID=$(echo "$BODY" | python -c "
           import sys,json
           print(json.load(sys.stdin)['id'])
           ")
 
           echo "CUSTOMER_ID_A=$CUSTOMER_ID" >> "$GITHUB_ENV"
 
-
       - name: Create Product
         run: |
-
-          RESPONSE=$(curl --fail --silent --show-error \
+          RESPONSE=$(curl --silent --show-error \
+            -w '\nHTTP_STATUS:%{http_code}' \
             -X POST \
             http://localhost:5080/api/products \
             -H "Authorization: Bearer $API_TOKEN_A" \
@@ -208,22 +203,28 @@ jobs:
 
           echo "$RESPONSE"
 
-          PRODUCT_ID=$(echo "$RESPONSE" | python -c "
+          STATUS=$(echo "$RESPONSE" | sed -n 's/^HTTP_STATUS://p')
+          BODY=$(echo "$RESPONSE" | sed '/^HTTP_STATUS:/d')
+
+          test "$STATUS" = "201"
+
+          PRODUCT_ID=$(echo "$BODY" | python -c "
           import sys,json
           print(json.load(sys.stdin)['id'])
           ")
 
           echo "PRODUCT_ID_A=$PRODUCT_ID" >> "$GITHUB_ENV"
 
-
       - name: Read Customer and Product
         run: |
+          echo "===== CUSTOMERS ====="
 
           curl --fail --silent --show-error \
             http://localhost:5080/api/customers \
             -H "Authorization: Bearer $API_TOKEN_A"
 
           echo
+          echo "===== PRODUCTS ====="
 
           curl --fail --silent --show-error \
             http://localhost:5080/api/products \
@@ -231,11 +232,17 @@ jobs:
 
           echo
 
-
       - name: Create Sales Invoice
+        shell: bash
         run: |
+          echo "===== CREATING SALES INVOICE ====="
+          echo "Customer ID: $CUSTOMER_ID_A"
+          echo "Product ID: $PRODUCT_ID_A"
 
-          RESPONSE=$(curl --fail --silent --show-error \
+          set +e
+
+          RESPONSE=$(curl --silent --show-error \
+            -w '\nHTTP_STATUS:%{http_code}' \
             -X POST \
             http://localhost:5080/api/invoices \
             -H "Authorization: Bearer $API_TOKEN_A" \
@@ -255,9 +262,32 @@ jobs:
               ]
             }")
 
+          CURL_STATUS=$?
+
+          echo "===== CURL EXIT CODE ====="
+          echo "$CURL_STATUS"
+
+          echo "===== INVOICE RESPONSE ====="
           echo "$RESPONSE"
 
-          echo "$RESPONSE" | python -c "
+          STATUS=$(echo "$RESPONSE" | sed -n 's/^HTTP_STATUS://p')
+          BODY=$(echo "$RESPONSE" | sed '/^HTTP_STATUS:/d')
+
+          echo "===== HTTP STATUS ====="
+          echo "$STATUS"
+
+          if [ "$CURL_STATUS" -ne 0 ] || [ "$STATUS" != "200" ]; then
+            echo "Invoice request failed."
+            echo "===== API LOG ====="
+            cat backend/DaviaAccount.Api/api.log || true
+            exit 1
+          fi
+
+          echo "$BODY" > /tmp/invoice-a.json
+
+          echo "===== VERIFY INVOICE TOTAL ====="
+
+          echo "$BODY" | python -c "
           import sys,json
 
           data=json.load(sys.stdin)
@@ -270,13 +300,10 @@ jobs:
           print('Invoice total verified: 195')
           "
 
-          echo "$RESPONSE" > /tmp/invoice-a.json
-
-
       - name: Register Company B
         run: |
-
-          curl --fail --silent --show-error \
+          RESPONSE=$(curl --silent --show-error \
+            -w '\nHTTP_STATUS:%{http_code}' \
             -X POST \
             http://localhost:5080/api/auth/register \
             -H "Content-Type: application/json" \
@@ -285,13 +312,18 @@ jobs:
               "fullName": "Test User B",
               "username": "testb@davia.local",
               "password": "TestPassword123!"
-            }'
+            }')
 
+          echo "$RESPONSE"
+
+          STATUS=$(echo "$RESPONSE" | sed -n 's/^HTTP_STATUS://p')
+          test "$STATUS" -ge 200
+          test "$STATUS" -lt 300
 
       - name: Login Company B
         run: |
-
-          RESPONSE=$(curl --fail --silent --show-error \
+          RESPONSE=$(curl --silent --show-error \
+            -w '\nHTTP_STATUS:%{http_code}' \
             -X POST \
             http://localhost:5080/api/auth/login \
             -H "Content-Type: application/json" \
@@ -300,17 +332,22 @@ jobs:
               "password": "TestPassword123!"
             }')
 
-          TOKEN=$(echo "$RESPONSE" | python -c "
+          echo "$RESPONSE"
+
+          STATUS=$(echo "$RESPONSE" | sed -n 's/^HTTP_STATUS://p')
+          BODY=$(echo "$RESPONSE" | sed '/^HTTP_STATUS:/d')
+
+          test "$STATUS" = "200"
+
+          TOKEN=$(echo "$BODY" | python -c "
           import sys,json
           print(json.load(sys.stdin)['token'])
           ")
 
           echo "API_TOKEN_B=$TOKEN" >> "$GITHUB_ENV"
 
-
       - name: Verify Tenant Isolation
         run: |
-
           CUSTOMERS=$(curl --fail --silent --show-error \
             http://localhost:5080/api/customers \
             -H "Authorization: Bearer $API_TOKEN_B")
@@ -319,44 +356,32 @@ jobs:
             http://localhost:5080/api/products \
             -H "Authorization: Bearer $API_TOKEN_B")
 
-
-          echo "Company B customers:"
+          echo "===== COMPANY B CUSTOMERS ====="
           echo "$CUSTOMERS"
 
-          echo "Company B products:"
+          echo "===== COMPANY B PRODUCTS ====="
           echo "$PRODUCTS"
-
 
           echo "$CUSTOMERS" | python -c "
           import sys,json
-
           data=json.load(sys.stdin)
-
           assert len(data) == 0, \
               f'Company B can see Company A customers: {data}'
           "
 
-
           echo "$PRODUCTS" | python -c "
           import sys,json
-
           data=json.load(sys.stdin)
-
           assert len(data) == 0, \
               f'Company B can see Company A products: {data}'
           "
 
-
           echo "Tenant isolation verified."
-
 
       - name: Show API log on failure
         if: failure()
-
         run: |
-
           echo "===== API LOG ====="
-
           cat backend/DaviaAccount.Api/api.log || true
 
 
@@ -365,31 +390,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
-
         with:
           node-version: '20'
-
 
       - name: Install Dependencies
         working-directory: frontend
         run: npm install
 
-
       - name: Build Frontend
         working-directory: frontend
         run: npm run build
 
-
       - name: Upload Frontend Build
         uses: actions/upload-artifact@v4
-
         with:
           name: davia-frontend
           path: frontend/dist
