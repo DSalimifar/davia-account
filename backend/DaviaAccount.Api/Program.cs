@@ -186,7 +186,7 @@ app.MapPost("/api/invoices", async (ClaimsPrincipal cp, InvoiceRequest req, AppD
     db.AuditLogs.Add(new AuditLog
     {
         CompanyId = companyId,
-        UserId = int.Parse(cp.FindFirstValue("sub")!),
+        UserId = int.Parse(cp.FindFirstValue(ClaimTypes.NameIdentifier) ?? cp.FindFirstValue("sub") ?? throw new InvalidOperationException("User ID claim is missing.")),
         Action = "CREATE",
         EntityType = "SalesInvoice",
         EntityId = invoice.Id,
